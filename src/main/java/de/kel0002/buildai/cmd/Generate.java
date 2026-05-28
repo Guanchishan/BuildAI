@@ -196,6 +196,19 @@ public class Generate implements CommandExecutor {
 
 
         List<String> unset_vars = ConfigManager.getVarsinDictionary(payload);
+        String apiKey = ConfigManager.getApiKey(model_preset);
+        if (apiKey != null) {
+            for (String key : payload_overwrites.keySet()) {
+                apiKey = ConfigManager.replaceInString(apiKey, key, payload_overwrites.get(key));
+            }
+
+            if (ConfigManager.isUnsetVariable(apiKey)) {
+                if (unset_vars == null) {
+                    unset_vars = new ArrayList<>();
+                }
+                unset_vars.add(apiKey);
+            }
+        }
         if (unset_vars != null){
             String param = unset_vars.stream()
                     .map(s -> "'" + s.replaceAll("^%|%$", "") + "'") // Remove '%' and add quotes
@@ -206,7 +219,7 @@ public class Generate implements CommandExecutor {
 
         String endpoint = ConfigManager.getUrl(model_preset);
 
-        String response_all = RequestHandler.dorequest(endpoint, payload);
+        String response_all = RequestHandler.dorequest(endpoint, payload, apiKey);
 
 
         if (response_all == null){

@@ -37,8 +37,8 @@ prompt:
 # List of available model presets.
 # This must be kept in sync with the models defined below for proper tab-completion functionality.
 model_list:
-  - "ollama_gemma2"
-  - "ollama_custom"
+  - "gpt-5.5"
+  - "gpt-4o"
 
 # Presets available to players.
 # Variables:
@@ -46,18 +46,24 @@ model_list:
 #   %seed% - A random number between 0 and 99999.
 #   %SomeOtherVar% - Any variable defined you.
 models:
-  ollama_gemma2:
-    endpoint: http://localhost:11434/api/generate
+  gpt-5.5:
+    endpoint: https://api.openai.com/v1/chat/completions
+    api_key: "replace-with-openai-api-key"
     payload:
-      - model: "gemma2:latest"
-      - prompt: "%prompt%"
+      - model: "gpt-5.5"
+      - messages:
+          - role: "user"
+            content: "%prompt%"
       - stream: false # Streamed responses are not supported.
       - seed: "%seed%"
 
-  ollama_custom:
-    endpoint: http://localhost:11434/api/generate
+  gpt-4o:
+    endpoint: https://api.openai.com/v1/chat/completions
+    api_key: "replace-with-openai-api-key"
     payload:
       - model: "%model%"
-      - prompt: "%prompt%"
+      - messages:
+          - role: "user"
+            content: "%prompt%"
       - stream: false
       - seed: "%seed%"
