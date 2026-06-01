@@ -1,27 +1,45 @@
 package de.kel0002.buildai.util;
 
-import java.io.*;
-import java.net.*;
-import java.nio.charset.StandardCharsets;
-import java.util.Collection;
-import java.util.Dictionary;
-import java.util.Enumeration;
-import java.util.Map;
+import com.google.gson.Gson;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.SocketTimeoutException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Dictionary;
 
 public class RequestHandler {
-    public static String dorequest(String url_string, Dictionary<String, Object> payload) {
-        return dorequest(url_string, payload, null);
+    private static final Gson GSON = new Gson();
+    private static final int DEFAULT_TIMEOUT_SECONDS = 90;
+
+    public static RequestResult dorequest(String urlString, Dictionary<String, Object> payload) {
+        return dorequest(urlString, payload, null, DEFAULT_TIMEOUT_SECONDS);
     }
 
-    public static String dorequest(String url_string, Dictionary<String, Object> payload, String apiKey) {
+    public static RequestResult dorequest(String urlString, Dictionary<String, Object> payload, String apiKey) {
+        return dorequest(urlString, payload, apiKey, DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    public static RequestResult dorequest(String urlString, Dictionary<String, Object> payload, String apiKey, int timeoutSeconds) {
+        int effectiveTimeoutSeconds = Math.max(1, timeoutSeconds);
+        if (urlString == null || urlString.trim().isEmpty()) {
+            return RequestResult.failure("Endpoint is not configured.");
+        }
+
+        HttpURLConnection connection = null;
         try {
+            String jsonPayload = GSON.toJson(payload);
 
-            String jsonPayload = createJsonPayloadFromDictionary(payload);
+            URL url = new URL(urlString);
+            connection = (HttpURLConnection) url.openConnection();
+            int timeoutMillis = effectiveTimeoutSeconds * 1000;
 
-            URL url = new URL(url_string);
-            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-
+            connection.setConnectTimeout(timeoutMillis);
+            connection.setReadTimeout(timeoutMillis);
             connection.setRequestMethod("POST");
             connection.setRequestProperty("Content-Type", "application/json");
             connection.setRequestProperty("Accept", "application/json");
@@ -41,135 +59,83 @@ public class RequestHandler {
             }
 
             int responseCode = connection.getResponseCode();
-            InputStream responseStream = responseCode == 200
+            InputStream responseStream = responseCode >= 200 && responseCode < 300
                     ? connection.getInputStream()
                     : connection.getErrorStream();
+            String body = readResponse(responseStream);
 
-            BufferedReader reader = new BufferedReader(new InputStreamReader(responseStream, StandardCharsets.UTF_8));
+            if (responseCode >= 200 && responseCode < 300) {
+                return RequestResult.success(responseCode, body);
+            }
+            return RequestResult.httpError(responseCode, body);
+        } catch (SocketTimeoutException e) {
+            return RequestResult.failure("Request timed out after " + effectiveTimeoutSeconds + " seconds.");
+        } catch (Exception e) {
+            String message = e.getMessage() == null ? e.getClass().getSimpleName() : e.getClass().getSimpleName() + ": " + e.getMessage();
+            return RequestResult.failure(message);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
+        }
+    }
+
+    private static String readResponse(InputStream responseStream) throws java.io.IOException {
+        if (responseStream == null) {
+            return "";
+        }
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(responseStream, StandardCharsets.UTF_8))) {
             StringBuilder response = new StringBuilder();
             String line;
             while ((line = reader.readLine()) != null) {
                 response.append(line.trim());
             }
-            reader.close();
-
             return response.toString();
-        } catch (Exception e) {
-            return null;
         }
     }
 
-    private static String createJsonPayloadFromDictionary(Dictionary<String, Object> payload) {
-        StringBuilder jsonBuilder = new StringBuilder("{");
-        Enumeration<String> keys = payload.keys();
+    public static class RequestResult {
+        private final boolean success;
+        private final int statusCode;
+        private final String body;
+        private final String errorMessage;
 
-        while (keys.hasMoreElements()) {
-            String key = keys.nextElement();
-            Object value = payload.get(key);
-
-            jsonBuilder.append(toJsonString(key)).append(":").append(toJsonValue(value));
-
-            if (keys.hasMoreElements()) {
-                jsonBuilder.append(",");
-            }
+        private RequestResult(boolean success, int statusCode, String body, String errorMessage) {
+            this.success = success;
+            this.statusCode = statusCode;
+            this.body = body == null ? "" : body;
+            this.errorMessage = errorMessage == null ? "" : errorMessage;
         }
 
-        jsonBuilder.append("}");
-        return jsonBuilder.toString();
+        public static RequestResult success(int statusCode, String body) {
+            return new RequestResult(true, statusCode, body, "");
+        }
+
+        public static RequestResult httpError(int statusCode, String body) {
+            return new RequestResult(false, statusCode, body, "");
+        }
+
+        public static RequestResult failure(String errorMessage) {
+            return new RequestResult(false, -1, "", errorMessage);
+        }
+
+        public boolean isSuccess() {
+            return success;
+        }
+
+        public int getStatusCode() {
+            return statusCode;
+        }
+
+        public String getBody() {
+            return body;
+        }
+
+        public String describeFailure() {
+            if (statusCode > 0) {
+                return "HTTP " + statusCode + ": " + body;
+            }
+            return errorMessage;
+        }
     }
-
-    private static String toJsonValue(Object value) {
-        if (value == null) {
-            return "null";
-        }
-        if (value instanceof String) {
-            return toJsonString((String) value);
-        }
-        if (value instanceof Boolean || value instanceof Number) {
-            return String.valueOf(value);
-        }
-        if (value instanceof Dictionary) {
-            StringBuilder jsonBuilder = new StringBuilder("{");
-            Dictionary<?, ?> dictionary = (Dictionary<?, ?>) value;
-            Enumeration<?> keys = dictionary.keys();
-            while (keys.hasMoreElements()) {
-                Object key = keys.nextElement();
-                jsonBuilder.append(toJsonString(String.valueOf(key))).append(":")
-                        .append(toJsonValue(dictionary.get(key)));
-                if (keys.hasMoreElements()) {
-                    jsonBuilder.append(",");
-                }
-            }
-            jsonBuilder.append("}");
-            return jsonBuilder.toString();
-        }
-        if (value instanceof Map) {
-            StringBuilder jsonBuilder = new StringBuilder("{");
-            boolean first = true;
-            for (Object entryObject : ((Map<?, ?>) value).entrySet()) {
-                Map.Entry<?, ?> entry = (Map.Entry<?, ?>) entryObject;
-                if (!first) {
-                    jsonBuilder.append(",");
-                }
-                jsonBuilder.append(toJsonString(String.valueOf(entry.getKey()))).append(":")
-                        .append(toJsonValue(entry.getValue()));
-                first = false;
-            }
-            jsonBuilder.append("}");
-            return jsonBuilder.toString();
-        }
-        if (value instanceof Collection) {
-            StringBuilder jsonBuilder = new StringBuilder("[");
-            boolean first = true;
-            for (Object item : (Collection<?>) value) {
-                if (!first) {
-                    jsonBuilder.append(",");
-                }
-                jsonBuilder.append(toJsonValue(item));
-                first = false;
-            }
-            jsonBuilder.append("]");
-            return jsonBuilder.toString();
-        }
-        return toJsonString(String.valueOf(value));
-    }
-
-    private static String toJsonString(String value) {
-        StringBuilder escaped = new StringBuilder("\"");
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            switch (c) {
-                case '"':
-                    escaped.append("\\\"");
-                    break;
-                case '\\':
-                    escaped.append("\\\\");
-                    break;
-                case '\b':
-                    escaped.append("\\b");
-                    break;
-                case '\f':
-                    escaped.append("\\f");
-                    break;
-                case '\n':
-                    escaped.append("\\n");
-                    break;
-                case '\r':
-                    escaped.append("\\r");
-                    break;
-                case '\t':
-                    escaped.append("\\t");
-                    break;
-                default:
-                    if (c < 0x20) {
-                        escaped.append(String.format("\\u%04x", (int) c));
-                    } else {
-                        escaped.append(c);
-                    }
-            }
-        }
-        escaped.append("\"");
-        return escaped.toString();
-    }
-
 }

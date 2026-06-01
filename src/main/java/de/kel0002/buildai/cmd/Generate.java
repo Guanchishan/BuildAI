@@ -219,16 +219,20 @@ public class Generate implements CommandExecutor {
 
         String endpoint = ConfigManager.getUrl(model_preset);
 
-        String response_all = RequestHandler.dorequest(endpoint, payload, apiKey);
+        int requestTimeoutSeconds = Math.max(1, BuildAI.getInstance().getConfig().getInt("request_timeout_seconds", 90));
+        RequestHandler.RequestResult responseResult = RequestHandler.dorequest(endpoint, payload, apiKey, requestTimeoutSeconds);
 
 
-        if (response_all == null){
-            stop_error(player, "error.request", actionBarTask, boxclass);
+        if (!responseResult.isSuccess()){
+            BuildAI.getInstance().getLogger().warning("AI request failed for preset '" + model_preset + "': " + abbreviate(responseResult.describeFailure(), 1000));
+            stop_error(player, "error.request.http", responseResult.describeFailure(), actionBarTask, boxclass);
             return;
         }
 
+        String response_all = responseResult.getBody();
         String response = ResponseFormatter.extractResponseField(response_all);
         if (response == null){
+            BuildAI.getInstance().getLogger().warning("AI response for preset '" + model_preset + "' did not contain a supported content field: " + abbreviate(response_all, 1000));
             stop_error(player, null, actionBarTask, boxclass);
             sendFeedback(player, "error.request.extract", response_all);
             return;
@@ -236,14 +240,19 @@ public class Generate implements CommandExecutor {
 
         ArrayList<String> response_array = ResponseFormatter.extractResponseLines(response);
 
+        ArrayList<String> finished_cmd_list = get_finished_cmd_list(response_array, player);
+        if (finished_cmd_list.isEmpty()) {
+            BuildAI.getInstance().getLogger().warning("AI response for preset '" + model_preset + "' contained no executable build commands: " + abbreviate(response, 1000));
+            stop_error(player, "error.response.no_commands", actionBarTask, boxclass);
+            return;
+        }
+
         actionBarTask.cancel();
         BukkitTask actionBarTask2 = runActionBarTask("wait.placing.actionbar", player);
 
-        ArrayList<String> finished_cmd_list = get_finished_cmd_list(response_array, player);
-
         sendFeedback(player, "wait.execution");
 
-        scheduleBuildTasks(finished_cmd_list, use_relative_cords, player, x1, y1, z1);
+        scheduleBuildTasks(finished_cmd_list, use_relative_cords, player, x1, y1, z1, x2, y2, z2);
 
 
         int build_delay = BuildAI.getInstance().getConfig().getInt("build_delay");
@@ -270,7 +279,7 @@ public class Generate implements CommandExecutor {
     }
 
     public void scheduleBuildTasks(ArrayList<String> finished_cmd_list, boolean use_relative_cords, Player player,
-                                   int x1, int y1, int z1){
+                                   int x1, int y1, int z1, int x2, int y2, int z2){
 
         int build_delay = BuildAI.getInstance().getConfig().getInt("build_delay");
         Bukkit.getScheduler().runTask(BuildAI.getInstance(), () -> {
@@ -282,11 +291,11 @@ public class Generate implements CommandExecutor {
                 Bukkit.getScheduler().runTaskLater(BuildAI.getInstance(), () -> {
                     if (cmd.startsWith("setblock")){
                         perform_setblock(cmd, player, use_relative_cords,
-                                x1, y1, z1);
+                                x1, y1, z1, x2, y2, z2);
 
                     } else if (cmd.startsWith("fill")){
                         perform_fill(cmd, player, use_relative_cords,
-                                x1, y1, z1);
+                                x1, y1, z1, x2, y2, z2);
                     }
                     }, delay);
             }
@@ -294,56 +303,118 @@ public class Generate implements CommandExecutor {
     }
 
     public void perform_fill(String cmd, Player player, boolean use_relative_cords,
-                                int x1, int y1, int z1){
-        String[] parts = cmd.split("\\s+");
-        int cx = Integer.parseInt(parts[1]);
-        int cy = Integer.parseInt(parts[2]);
-        int cz = Integer.parseInt(parts[3]);
-
-        int cx2 = Integer.parseInt(parts[4]);
-        int cy2 = Integer.parseInt(parts[5]);
-        int cz2 = Integer.parseInt(parts[6]);
-
-        if (use_relative_cords){
-            cx = cx + x1;
-            cy = cy + y1;
-            cz = cz + z1;
-
-            cx2 = cx2 + x1;
-            cy2 = cy2 + y1;
-            cz2 = cz2 + z1;
-        }
-        String blockstring = parts[7];
+                                int x1, int y1, int z1, int x2, int y2, int z2){
         boolean success = false;
         try{
-        success = fillBlocks(player.getWorld(), cx, cy, cz, cx2, cy2, cz2 ,blockstring);
+            String[] parts = cmd.split("\\s+");
+            if (parts.length < 8) {
+                sendFeedback(player, "error.fill", cmd);
+                return;
+            }
+
+            int cx = Integer.parseInt(parts[1]);
+            int cy = Integer.parseInt(parts[2]);
+            int cz = Integer.parseInt(parts[3]);
+
+            int cx2 = Integer.parseInt(parts[4]);
+            int cy2 = Integer.parseInt(parts[5]);
+            int cz2 = Integer.parseInt(parts[6]);
+
+            if (use_relative_cords){
+                cx = cx + x1;
+                cy = cy + y1;
+                cz = cz + z1;
+
+                cx2 = cx2 + x1;
+                cy2 = cy2 + y1;
+                cz2 = cz2 + z1;
+            }
+
+            if (!isCuboidWithinSelection(cx, cy, cz, cx2, cy2, cz2, x1, y1, z1, x2, y2, z2)) {
+                sendFeedback(player, "error.fill", cmd);
+                return;
+            }
+
+            int maxFillVolume = Math.max(1, BuildAI.getInstance().getConfig().getInt("max_fill_volume", 32768));
+            if (getFillVolume(cx, cy, cz, cx2, cy2, cz2) > maxFillVolume) {
+                sendFeedback(player, "error.fill", cmd);
+                return;
+            }
+
+            String blockstring = parts[7];
+            success = fillBlocks(player.getWorld(), cx, cy, cz, cx2, cy2, cz2 ,blockstring);
         } catch (Exception ignored){}
         if(!success){sendFeedback(player, "error.fill", cmd);}
     }
 
 
    public void perform_setblock(String cmd, Player player, boolean use_relative_cords,
-                                int x1, int y1, int z1){
-        String[] parts = cmd.split("\\s+");
-
-        int x = Integer.parseInt(parts[1]);
-        int y = Integer.parseInt(parts[2]);
-        int z = Integer.parseInt(parts[3]);
-
-        if (use_relative_cords){
-            x = x + x1;
-            y = y + y1;
-            z = z + z1;
-        }
-        String blockstring = parts[4];
+                                int x1, int y1, int z1, int x2, int y2, int z2){
         boolean success = false;
         try {
+            String[] parts = cmd.split("\\s+");
+            if (parts.length < 5) {
+                sendFeedback(player, "error.setblock", cmd);
+                return;
+            }
+
+            int x = Integer.parseInt(parts[1]);
+            int y = Integer.parseInt(parts[2]);
+            int z = Integer.parseInt(parts[3]);
+
+            if (use_relative_cords){
+                x = x + x1;
+                y = y + y1;
+                z = z + z1;
+            }
+
+            if (!isWithinSelection(x, y, z, x1, y1, z1, x2, y2, z2)) {
+                sendFeedback(player, "error.setblock", cmd);
+                return;
+            }
+
+            String blockstring = parts[4];
             success = setblock(player.getWorld(), x, y, z, blockstring);
         } catch (Exception ignored){}
 
         if(!success){sendFeedback(player, "error.setblock", cmd);}
    }
 
+
+    private static boolean isWithinSelection(int x, int y, int z, int x1, int y1, int z1, int x2, int y2, int z2) {
+        int minX = Math.min(x1, x2);
+        int maxX = Math.max(x1, x2);
+        int minY = Math.min(y1, y2);
+        int maxY = Math.max(y1, y2);
+        int minZ = Math.min(z1, z2);
+        int maxZ = Math.max(z1, z2);
+        return x >= minX && x <= maxX
+                && y >= minY && y <= maxY
+                && z >= minZ && z <= maxZ;
+    }
+
+    private static boolean isCuboidWithinSelection(
+            int x1, int y1, int z1,
+            int x2, int y2, int z2,
+            int sx1, int sy1, int sz1,
+            int sx2, int sy2, int sz2
+    ) {
+        int minX = Math.min(x1, x2);
+        int maxX = Math.max(x1, x2);
+        int minY = Math.min(y1, y2);
+        int maxY = Math.max(y1, y2);
+        int minZ = Math.min(z1, z2);
+        int maxZ = Math.max(z1, z2);
+        return isWithinSelection(minX, minY, minZ, sx1, sy1, sz1, sx2, sy2, sz2)
+                && isWithinSelection(maxX, maxY, maxZ, sx1, sy1, sz1, sx2, sy2, sz2);
+    }
+
+    private static long getFillVolume(int x1, int y1, int z1, int x2, int y2, int z2) {
+        long sizeX = Math.abs((long) x2 - x1) + 1L;
+        long sizeY = Math.abs((long) y2 - y1) + 1L;
+        long sizeZ = Math.abs((long) z2 - z1) + 1L;
+        return sizeX * sizeY * sizeZ;
+    }
 
 
     public ArrayList<String> get_finished_cmd_list(ArrayList<String> response_array, Player player){
@@ -501,6 +572,16 @@ public class Generate implements CommandExecutor {
         Location normalizedPos2 = new Location(pos2.getWorld(), maxX, maxY, maxZ);
 
         return new Location[]{normalizedPos1, normalizedPos2};
+    }
+
+    private static String abbreviate(String value, int maxLength) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxLength)) + "...";
     }
 
 

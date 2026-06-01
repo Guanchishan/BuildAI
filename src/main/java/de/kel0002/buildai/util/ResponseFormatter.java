@@ -1,104 +1,56 @@
 package de.kel0002.buildai.util;
 
-import java.util.ArrayList;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
+import java.util.ArrayList;
 
 public class ResponseFormatter {
     public static String extractResponseField(String jsonResponse) {
         try {
-            String response = extractJsonStringField(jsonResponse, "response", 0);
-            if (response != null) {
-                return response;
+            JsonObject root = JsonParser.parseString(jsonResponse).getAsJsonObject();
+
+            String legacyResponse = getString(root, "response");
+            if (legacyResponse != null) {
+                return legacyResponse;
             }
 
-            int choicesIndex = jsonResponse.indexOf("\"choices\"");
-            if (choicesIndex == -1) {
+            JsonArray choices = root.getAsJsonArray("choices");
+            if (choices == null || choices.size() == 0) {
                 return null;
             }
 
-            int messageIndex = jsonResponse.indexOf("\"message\"", choicesIndex);
-            if (messageIndex != -1) {
-                response = extractJsonStringField(jsonResponse, "content", messageIndex);
-                if (response != null) {
-                    return response;
+            JsonObject firstChoice = choices.get(0).getAsJsonObject();
+            JsonObject message = firstChoice.getAsJsonObject("message");
+            if (message != null) {
+                String content = getString(message, "content");
+                if (content != null) {
+                    return content;
                 }
             }
 
-            return extractJsonStringField(jsonResponse, "content", choicesIndex);
+            return getString(firstChoice, "content");
         } catch (Exception e) {
             return null;
         }
     }
 
-    private static String extractJsonStringField(String jsonResponse, String fieldName, int startSearch) {
-        String field = "\"" + fieldName + "\"";
-        int fieldIndex = jsonResponse.indexOf(field, startSearch);
-
-        while (fieldIndex != -1) {
-            int colonIndex = jsonResponse.indexOf(":", fieldIndex + field.length());
-            if (colonIndex == -1) return null;
-
-            int valueStart = colonIndex + 1;
-            while (valueStart < jsonResponse.length() && Character.isWhitespace(jsonResponse.charAt(valueStart))) {
-                valueStart++;
-            }
-
-            if (valueStart < jsonResponse.length() && jsonResponse.charAt(valueStart) == '"') {
-                return readJsonString(jsonResponse, valueStart);
-            }
-
-            fieldIndex = jsonResponse.indexOf(field, fieldIndex + field.length());
+    private static String getString(JsonObject object, String fieldName) {
+        if (object == null || !object.has(fieldName)) {
+            return null;
+        }
+        JsonElement element = object.get(fieldName);
+        if (element == null || element.isJsonNull()) {
+            return null;
+        }
+        if (element.isJsonPrimitive()) {
+            String value = element.getAsString();
+            return value == null || value.isEmpty() ? null : value;
         }
         return null;
     }
-
-    private static String readJsonString(String jsonResponse, int quoteIndex) {
-        StringBuilder result = new StringBuilder();
-        for (int i = quoteIndex + 1; i < jsonResponse.length(); i++) {
-            char c = jsonResponse.charAt(i);
-            if (c == '"') {
-                return result.toString();
-            }
-            if (c == '\\' && i + 1 < jsonResponse.length()) {
-                char escaped = jsonResponse.charAt(++i);
-                switch (escaped) {
-                    case '"':
-                    case '\\':
-                    case '/':
-                        result.append(escaped);
-                        break;
-                    case 'b':
-                        result.append('\b');
-                        break;
-                    case 'f':
-                        result.append('\f');
-                        break;
-                    case 'n':
-                        result.append('\n');
-                        break;
-                    case 'r':
-                        result.append('\r');
-                        break;
-                    case 't':
-                        result.append('\t');
-                        break;
-                    case 'u':
-                        if (i + 4 < jsonResponse.length()) {
-                            String hex = jsonResponse.substring(i + 1, i + 5);
-                            result.append((char) Integer.parseInt(hex, 16));
-                            i += 4;
-                        }
-                        break;
-                    default:
-                        result.append(escaped);
-                }
-            } else {
-                result.append(c);
-            }
-        }
-        return null;
-    }
-
 
     public static ArrayList<String> extractResponseLines(String responseString) {
         String[] lines = responseString.split("[/\\n\\r]+");
@@ -128,7 +80,6 @@ public class ResponseFormatter {
         return linesList;
     }
 
-
     public static ArrayList<String> getLettersAndNumbers() {
         ArrayList<String> list = new ArrayList<>();
 
@@ -146,7 +97,6 @@ public class ResponseFormatter {
 
         return list;
     }
-
 
     public static boolean endsWithAny(String line, ArrayList<String> characters) {
         for (String character : characters) {

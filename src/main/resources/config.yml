@@ -7,6 +7,15 @@ particles_per_block: 5
 # Values: Integers, Default: 1
 build_delay: 1
 
+# Timeout in seconds for outbound AI API requests.
+# Values: Integers, Default: 90
+request_timeout_seconds: 90
+
+# Maximum number of blocks a single /fill command from the AI may modify.
+# This is checked in addition to the selected region boundary.
+# Values: Integers, Default: 32768
+max_fill_volume: 32768
+
 # Sends the formatted answer from the AI to the chat. Primarily used for debugging.
 # Values: true/false, Default: false
 sendresponse: false

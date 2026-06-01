@@ -6,7 +6,7 @@
 
   <groupId>de.kel0002</groupId>
   <artifactId>BuildAI</artifactId>
-  <version>1.0-1-guanchishan.1</version>
+  <version>1.0-1-guanchishan.3</version>
   <packaging>jar</packaging>
 
   <name>BuildAI</name>
@@ -68,6 +68,11 @@
           <artifactId>paper-api</artifactId>
           <version>1.20.1-R0.1-SNAPSHOT</version>
           <scope>provided</scope>
+      </dependency>
+      <dependency>
+          <groupId>com.google.code.gson</groupId>
+          <artifactId>gson</artifactId>
+          <version>2.10.1</version>
       </dependency>
   </dependencies>
 </project>

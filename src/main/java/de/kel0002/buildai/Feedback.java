@@ -42,7 +42,9 @@ public class Feedback {
             case "error.unset_vars": return "§4The following variable(s) are not set: {param}. Set them by including SomeVariable=SomeValue in your input";
 
             case "error.request": return "§4Did not get a response from the server. Confirm that the endpoint is online and check url in the config.yml file";
+            case "error.request.http": return "§4AI API request failed: {param}";
             case "error.request.extract": return "§4The plugin could not get the content of the server's response. The server returned: {param}";
+            case "error.response.no_commands": return "§4AI returned no executable build commands. Check the model and prompt format.";
             case "error.model_preset_payload": return "§4There was an error getting the payload from your desired model";
 
             case "error.setblock": return "§cError executing the setblock command provided by the AI: /{param}";
